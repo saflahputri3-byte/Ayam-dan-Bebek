@@ -1,0 +1,44 @@
+import type { BranchContext, InventoryRow } from '../erp/ErpTypes';
+
+export type Row = Record<string, unknown>;
+export interface OperationsRepository {
+  getTransfers(context: BranchContext): Promise<Row[]>;
+  createTransfer(payload: Row, key: string): Promise<Row>;
+  approveTransfer(id: string, approve: boolean, reason?: string): Promise<void>;
+  dispatchTransfer(id: string, key: string): Promise<void>;
+  receiveTransfer(id: string, items: Row[], key: string): Promise<void>;
+  getOpnames(context: BranchContext): Promise<Row[]>;
+  createOpname(payload: Row, key: string): Promise<Row>;
+  postOpname(id: string, submit: boolean): Promise<void>;
+  getReturns(context: BranchContext): Promise<Row[]>;
+  getSaleLines(saleId: string): Promise<Row[]>;
+  createReturn(payload: Row, key: string): Promise<Row>;
+  postReturn(id: string): Promise<void>;
+  getDeliveries(context: BranchContext): Promise<Row[]>;
+  createDelivery(payload: Row, key: string): Promise<Row>;
+  updateDelivery(id: string, status: string, recipient?: string, notes?: string): Promise<void>;
+  getPayables(companyId: string, branchId: string, asOf: string): Promise<Row[]>;
+  getReceivables(companyId: string, branchId: string, asOf: string): Promise<Row[]>;
+  setSalesDueDate(saleId: string, dueDate: string | null): Promise<void>;
+  setPurchaseDueDate(purchaseId: string, dueDate: string | null): Promise<void>;
+  recordSupplierPayment(payload: Row, key: string): Promise<Row>;
+  getFinanceAccounts(companyId: string): Promise<Row[]>;
+  createFinanceAccount(companyId: string, code: string, name: string, type: string, cashFlow: boolean): Promise<void>;
+  getPeriods(companyId: string): Promise<Row[]>;
+  createPeriod(companyId: string, name: string, starts: string, ends: string): Promise<void>;
+  closePeriod(periodId: string): Promise<void>;
+  getCashAccounts(context: BranchContext): Promise<Row[]>;
+  createCashAccount(context: BranchContext, payload: Row): Promise<void>;
+  setAccountMapping(companyId: string, key: string, accountId: string): Promise<void>;
+  postCashMovement(context: BranchContext, payload: Row, key?: string): Promise<void>;
+  recordExpense(payload: Row, key?: string): Promise<Row>;
+  postJournal(payload: Row, key?: string): Promise<Row>;
+  getCashBalances(companyId: string, branchId: string): Promise<Row[]>;
+  getTrialBalance(companyId: string, branchId: string, from: string, to: string): Promise<Row[]>;
+  getIncomeStatement(companyId: string, branchId: string, from: string, to: string): Promise<Row[]>;
+  getCashFlow(companyId: string, branchId: string, from: string, to: string): Promise<Row[]>;
+  getNotifications(context: BranchContext): Promise<Row[]>;
+  markNotificationRead(id: string): Promise<void>;
+  getInventory(context: BranchContext): Promise<InventoryRow[]>;
+  getWarehouses(companyId: string, branchId: string): Promise<Row[]>;
+}

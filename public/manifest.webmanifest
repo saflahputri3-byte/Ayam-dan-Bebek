@@ -1,0 +1,15 @@
+{
+  "name": "Agi Ayam & Bebek ERP",
+  "short_name": "Agi ERP",
+  "description": "Aplikasi operasional usaha ayam dan bebek.",
+  "lang": "id-ID",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f7f8",
+  "theme_color": "#102b3f",
+  "icons": [
+    { "src": "/icons/agi.svg", "sizes": "any 192x192 512x512", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

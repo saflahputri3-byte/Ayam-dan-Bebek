@@ -1,0 +1,13 @@
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+[build.environment]
+  RAYON_NUM_THREADS = "1"
+  VITE_SUPABASE_URL = "https://yzkcodffkayuqhqqflif.supabase.co"
+  VITE_SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl6a2NvZGZma2F5dXFocXFmbGlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ2OTEwMDUsImV4cCI6MjExMDI2NzAwNX0.MhBfsW_yUyDplXbfRJSuOMd7tfgNVNoTlYHrchvwJj8"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
