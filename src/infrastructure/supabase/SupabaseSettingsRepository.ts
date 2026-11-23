@@ -13,7 +13,17 @@ export class SupabaseSettingsRepository implements SettingsRepository {
     return data as SettingsRow;
   }
   async updateCompany(companyId: string, values: SettingsRow) {
-    const { error } = await this.client.rpc('update_company_profile', { p_company_id: companyId, p_name: values.name, p_legal_name: values.legal_name, p_currency_code: values.currency_code, p_timezone: values.timezone, p_address: values.address, p_phone: values.phone, p_email: values.email, p_logo_path: values.logo_path });
+    const { error } = await this.client.rpc('update_company_profile', {
+      p_company_id: companyId,
+      p_name: values.name,
+      p_legal_name: values.legal_name || null,
+      p_currency_code: (values.currency_code as string) || 'IDR',
+      p_timezone: (values.timezone as string) || 'Asia/Jakarta',
+      p_address: values.address || null,
+      p_phone: values.phone || null,
+      p_email: values.email || null,
+      p_logo_path: values.logo_path || null,
+    });
     if (error) throw error;
   }
   async getBranches(companyId: string) {
