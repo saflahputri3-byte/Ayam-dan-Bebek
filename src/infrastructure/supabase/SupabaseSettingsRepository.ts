@@ -13,7 +13,7 @@ export class SupabaseSettingsRepository implements SettingsRepository {
     return data as SettingsRow;
   }
   async updateCompany(companyId: string, values: SettingsRow) {
-    const { error } = await this.client.rpc('update_company_profile', {
+    const payload = {
       p_company_id: companyId,
       p_name: values.name,
       p_legal_name: values.legal_name || null,
@@ -23,8 +23,21 @@ export class SupabaseSettingsRepository implements SettingsRepository {
       p_phone: values.phone || null,
       p_email: values.email || null,
       p_logo_path: values.logo_path || null,
-    });
-    if (error) throw error;
+    };
+    const { error: rpcError } = await this.client.rpc('update_company_profile', payload);
+    if (rpcError) {
+      const { error: updateError } = await this.client.from('companies').update({
+        name: values.name,
+        legal_name: values.legal_name || null,
+        currency_code: (values.currency_code as string) || 'IDR',
+        timezone: (values.timezone as string) || 'Asia/Jakarta',
+        address: values.address || null,
+        phone: values.phone || null,
+        email: values.email || null,
+        logo_path: values.logo_path || null,
+      }).eq('id', companyId);
+      if (updateError) throw rpcError;
+    }
   }
   async getBranches(companyId: string) {
     const { data, error } = await this.client.from('branches').select('id,company_id,code,name,address,phone,is_active').eq('company_id', companyId).order('name');
