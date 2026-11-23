@@ -541,9 +541,17 @@ $$;
 
 create or replace function private.audit_row()
 returns trigger language plpgsql security definer set search_path = '' as $$
-declare v_row jsonb := to_jsonb(coalesce(new, old)); v_company uuid; v_branch uuid; v_id uuid;
+declare
+  v_row jsonb := to_jsonb(coalesce(new, old));
+  v_company uuid;
+  v_branch uuid;
+  v_id uuid;
 begin
-  v_company := (v_row->>'company_id')::uuid;
+  if tg_table_name = 'companies' then
+    v_company := nullif(v_row->>'id', '')::uuid;
+  else
+    v_company := coalesce(nullif(v_row->>'company_id', '')::uuid, nullif(v_row->>'id', '')::uuid);
+  end if;
   v_branch := nullif(v_row->>'branch_id','')::uuid;
   v_id := nullif(v_row->>'id','')::uuid;
   insert into public.audit_logs(company_id, branch_id, actor_id, action, entity_type, entity_id, before_data, after_data)

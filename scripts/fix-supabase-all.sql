@@ -4,13 +4,47 @@
 -- https://supabase.com/dashboard/project/yzkcodffkayuqhqqflif/sql/new
 -- ============================================================================
 
--- 1. PASTIKAN KOLOM IDENTITAS PERUSAHAAN TERSEDIA DI TABEL COMPANIES
+-- 1. PERBAIKI FUNGSI AUDIT_ROW (Akar masalah error 23502 not-null audit_logs)
+-- Pada tabel 'companies', ID perusahaan adalah kolom 'id', bukan 'company_id'.
+create or replace function private.audit_row()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare
+  v_row jsonb := to_jsonb(coalesce(new, old));
+  v_company uuid;
+  v_branch uuid;
+  v_id uuid;
+begin
+  if tg_table_name = 'companies' then
+    v_company := nullif(v_row->>'id', '')::uuid;
+  else
+    v_company := coalesce(nullif(v_row->>'company_id', '')::uuid, nullif(v_row->>'id', '')::uuid);
+  end if;
+
+  v_branch := nullif(v_row->>'branch_id', '')::uuid;
+  v_id := nullif(v_row->>'id', '')::uuid;
+
+  insert into public.audit_logs(company_id, branch_id, actor_id, action, entity_type, entity_id, before_data, after_data)
+  values (
+    v_company,
+    v_branch,
+    auth.uid(),
+    lower(tg_op),
+    tg_table_name,
+    v_id,
+    case when tg_op = 'INSERT' then null else to_jsonb(old) end,
+    case when tg_op = 'DELETE' then null else to_jsonb(new) end
+  );
+  return coalesce(new, old);
+end;
+$$;
+
+-- 2. PASTIKAN KOLOM IDENTITAS PERUSAHAAN TERSEDIA DI TABEL COMPANIES
 alter table public.companies add column if not exists address text;
 alter table public.companies add column if not exists phone text;
 alter table public.companies add column if not exists email text;
 alter table public.companies add column if not exists logo_path text;
 
--- 2. UPDATE LANGSUNG IDENTITAS PERUSAHAAN DENGAN DATA RESMI AGI AYAM & BEBEK
+-- 3. UPDATE LANGSUNG IDENTITAS RESMI PERUSAHAAN DI DATABASE
 do $$
 declare
   v_company uuid;
@@ -44,7 +78,7 @@ begin
     where id = v_company;
   end if;
 
-  -- 3. PASTIKAN CABANG PUSAT TERSEDIA
+  -- 4. PASTIKAN CABANG PUSAT TERSEDIA
   select id into v_branch from public.branches where company_id = v_company and code = 'PUSAT' limit 1;
   if v_branch is null then
     select id into v_branch from public.branches where company_id = v_company limit 1;
@@ -60,7 +94,7 @@ begin
     ) returning id into v_branch;
   end if;
 
-  -- 4. PASTIKAN GUDANG UTAMA TERSEDIA
+  -- 5. PASTIKAN GUDANG UTAMA TERSEDIA
   select id into v_warehouse from public.warehouses where company_id = v_company and branch_id = v_branch limit 1;
   if v_warehouse is null then
     insert into public.warehouses (company_id, branch_id, code, name)
@@ -68,7 +102,7 @@ begin
     returning id into v_warehouse;
   end if;
 
-  -- 5. KENDALIKAN PENUH: BERIKAN AKSES OWNER & SUPER ADMIN KE SEMUA PENGGUNA TERDAFTAR
+  -- 6. BERIKAN HAK AKSES OWNER & SUPER ADMIN KE SEMUA PENGGUNA TERDAFTAR
   for r_user in (select id from auth.users) loop
     -- Profil Pengguna
     insert into public.profiles (user_id, display_name)
@@ -96,7 +130,7 @@ begin
   raise notice 'Database Supabase berhasil disinkronkan untuk Perusahaan % dan Cabang %', v_company, v_branch;
 end $$;
 
--- 6. PERBARUI FUNGSI UPDATE_COMPANY_PROFILE AGAR SELALU AMAN & VALID
+-- 7. PERBARUI FUNGSI UPDATE PROFIL PERUSAHAAN
 create or replace function public.update_company_profile(
   p_company_id uuid,
   p_name text,
@@ -109,13 +143,11 @@ create or replace function public.update_company_profile(
   p_logo_path text
 ) returns void language plpgsql security definer set search_path = '' as $$
 begin
-  -- Periksa izin akses (hanya owner, super_admin, atau central_admin)
   if not private.has_company_access(p_company_id)
     or not private.has_any_role(p_company_id, array['owner','super_admin','central_admin']::public.app_role[]) then
     raise exception 'Hak ubah profil perusahaan ditolak' using errcode='42501';
   end if;
 
-  -- Validasi input fleksibel
   if nullif(trim(p_name),'') is null or length(trim(p_name)) > 160 then
     raise exception 'Nama usaha wajib diisi (maks 160 karakter)';
   end if;
@@ -137,20 +169,14 @@ begin
   end if;
 end $$;
 
--- Berikan izin eksekusi ke authenticated user
 revoke execute on function public.update_company_profile(uuid,text,text,text,text,text,text,text,text) from public,anon;
 grant execute on function public.update_company_profile(uuid,text,text,text,text,text,text,text,text) to authenticated;
 
--- 7. PASTIKAN RLS PADA COMPANIES MEMPERBOLEHKAN SELECT & UPDATE
+-- 8. PASTIKAN RLS COMPANIES
 grant select, update on public.companies to authenticated;
-
 drop policy if exists company_member_read on public.companies;
-create policy company_member_read on public.companies
-  for select to authenticated
-  using (private.has_company_access(id));
-
+create policy company_member_read on public.companies for select to authenticated using (private.has_company_access(id));
 drop policy if exists company_owner_update on public.companies;
-create policy company_owner_update on public.companies
-  for update to authenticated
+create policy company_owner_update on public.companies for update to authenticated
   using (private.has_any_role(id, array['owner','super_admin','central_admin']::public.app_role[]))
   with check (private.has_any_role(id, array['owner','super_admin','central_admin']::public.app_role[]));
