@@ -74,7 +74,9 @@ export class SupabaseErpRepository implements ErpRepository {
     if (error) throw error; return data as TransactionResult;
   }
   async postProduction(payload: Record<string, unknown>, key: string) {
-    const { data, error } = await this.client.rpc('post_production_batch', { p_payload: payload, p_idempotency_key: key }); if (error) throw error; return data as TransactionResult;
+    const { data, error } = await this.client.rpc('post_production_batch', { p_payload: payload, p_idempotency_key: key }); if (error) throw error;
+    const row = (data ?? {}) as Record<string, unknown>;
+    return { ...row, document_number: String(row.document_number ?? row.batch_number ?? '') } as TransactionResult;
   }
   async inspectBatch(batchId: string, result: 'passed' | 'rejected' | 'quarantined', notes: string) {
     const { error } = await this.client.rpc('inspect_product_batch', { p_batch_id: batchId, p_result: result, p_notes: notes }); if (error) throw error;
