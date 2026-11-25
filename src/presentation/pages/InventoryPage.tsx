@@ -1,49 +1,52 @@
 import { useEffect, useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, Check, CircleAlert, Clock3, LoaderCircle, PackageCheck, Search, ShieldAlert } from 'lucide-react';
-import type { BatchTraceability, BranchContext, InventoryMovement, InventoryRow } from '../../domain/erp/ErpTypes';
+import type { BatchTraceability, BranchContext, InventoryMovement, InventoryRow, Warehouse } from '../../domain/erp/ErpTypes';
 import type { ErpRepository } from '../../application/ports/ErpRepository';
+import { getErrorMessage } from '../../domain/shared/errorMessage';
 
 const statusLabels: Record<string, string> = { passed: 'Lolos inspeksi', pending: 'Menunggu inspeksi', rejected: 'Ditolak', quarantined: 'Karantina' };
 const movementLabels: Record<string, string> = { receipt: 'Penerimaan', sale: 'Penjualan', production_input: 'Input produksi', production_output: 'Output produksi', transfer_in: 'Transfer masuk', transfer_out: 'Transfer keluar', adjustment: 'Penyesuaian', reversal: 'Reversal' };
 
 export function InventoryPage({ repository, context }: { repository: ErpRepository; context: BranchContext }) {
-  const [rows, setRows] = useState<InventoryRow[]>([]); const [movements, setMovements] = useState<InventoryMovement[]>([]);
-  const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(''); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
+  const [rows, setRows] = useState<InventoryRow[]>([]); const [movements, setMovements] = useState<InventoryMovement[]>([]); const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(''); const [error, setError] = useState(''); const [notice, setNotice] = useState(''); const [search, setSearch] = useState('');
+  const [confirmInspect, setConfirmInspect] = useState<{ batchId: string; result: 'passed' | 'rejected' | 'quarantined' } | null>(null);
   const [trace, setTrace] = useState<BatchTraceability | null>(null); const [traceLoading, setTraceLoading] = useState(false); const [traceError, setTraceError] = useState('');
 
   async function refresh() {
     setLoading(true); setError('');
-    try { const [balances, ledger] = await Promise.all([repository.getInventoryReport(context), repository.getInventoryMovements(context)]); setRows(balances); setMovements(ledger); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Gagal memuat stok dan kartu mutasi cabang.'); }
+    try { const [balances, ledger, wh] = await Promise.all([repository.getInventoryReport(context), repository.getInventoryMovements(context), repository.getWarehouses(context.branchId)]); setRows(balances); setMovements(ledger); setWarehouses(wh); }
+    catch (cause) { setError(getErrorMessage(cause, 'Gagal memuat stok dan kartu mutasi cabang.')); }
     finally { setLoading(false); }
   }
   useEffect(() => { void refresh(); }, [repository, context.companyId, context.branchId]);
 
   async function inspect(batchId: string, result: 'passed' | 'rejected' | 'quarantined') {
-    const explanation = result === 'passed' ? 'Batch dinyatakan lolos dan dapat digunakan/terjual.' : result === 'rejected' ? 'Batch ditolak dan tidak dapat dijual.' : 'Batch dikarantina dan tidak dapat dijual.';
-    if (!window.confirm(`Konfirmasi inspeksi kualitas? ${explanation}`)) return;
+    setConfirmInspect(null);
     setBusy(batchId); setError(''); setNotice('');
     try { await repository.inspectBatch(batchId, result, 'Inspeksi dikonfirmasi dari aplikasi.'); setNotice('Hasil inspeksi tersimpan pada riwayat kualitas.'); await refresh(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Inspeksi gagal disimpan.'); }
+    catch (cause) { setError(getErrorMessage(cause, 'Inspeksi gagal disimpan.')); }
     finally { setBusy(''); }
   }
   async function openTrace(batchId: string) {
     setTraceLoading(true); setTraceError('');
     try { setTrace(await repository.getBatchTraceability(batchId)); }
-    catch (cause) { setTraceError(cause instanceof Error ? cause.message : 'Riwayat asal-usul batch gagal dimuat.'); }
+    catch (cause) { setTraceError(getErrorMessage(cause, 'Riwayat asal-usul batch gagal dimuat.')); }
     finally { setTraceLoading(false); }
   }
 
-  const visible = rows.filter((row) => Number(row.quantity) !== 0);
+  const warehouseName = (id: string) => warehouses.find((w) => w.id === id)?.name ?? id;
+  const visible = rows.filter((row) => Number(row.quantity) !== 0).filter((row) => `${row.product_name} ${row.sku} ${row.batch_id ?? ''} ${warehouseName(row.warehouse_id)}`.toLowerCase().includes(search.toLowerCase()));
   return <div className="erp-page">
     <header className="page-heading"><div><p className="eyebrow">OPERASIONAL · BATCH TRACEABILITY</p><h1>Persediaan</h1><p className="page-subtitle">Saldo dan riwayat pergerakan dibaca dari ledger. Telusuri batch dari penerimaan, proses produksi, inspeksi, hingga penjualan.</p></div><span className="live-badge page-live"><i/> LEDGER LIVE</span></header>
     {error && <div className="load-error" role="alert"><CircleAlert size={16}/>{error}</div>}{notice && <div className="success-notice">{notice}</div>}
     <section className="surface list-panel inventory-panel"><div className="surface-heading"><div><h2><PackageCheck size={15}/> Stok cabang dan gudang</h2><p>{visible.length} saldo batch · status kualitas dan lokasi tercatat per batch</p></div><span className="count-badge">Per batch</span></div>
-      {loading ? <div className="inline-loading"><LoaderCircle size={16} className="spin"/> Memuat saldo ledger…</div> : visible.length === 0 ? <div className="empty-state">Belum ada mutasi stok. Mulai dari pembelian dan penerimaan terkonfirmasi.</div> : <div className="inventory-list">{visible.map((row, index) => <article className="inventory-row" key={`${row.warehouse_id}-${row.product_id}-${row.batch_id ?? index}`}>
-        <div className="inventory-product"><span className="inventory-product-icon"><PackageCheck size={17}/></span><span><strong>{row.product_name}</strong><small>{row.sku} · batch {row.batch_id?.slice(0, 8) ?? 'tanpa batch'}</small></span></div>
-        <div className="inventory-qty"><strong>{row.quantity} {row.base_unit}</strong><small>{row.warehouse_id.slice(0, 8)} · minimum {row.minimum_stock} {row.base_unit}</small></div>
+      <label className="master-search"><Search size={15}/><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari produk, SKU, batch, atau gudang"/></label>
+      {loading ? <div className="inline-loading"><LoaderCircle size={16} className="spin"/> Memuat saldo ledger…</div> : visible.length === 0 ? <div className="empty-state">Belum ada mutasi stok atau tidak ditemukan kecocokan.</div> : <div className="inventory-list">{visible.map((row, index) => <article className="inventory-row" key={`${row.warehouse_id}-${row.product_id}-${row.batch_id ?? index}`}>
+        <div className="inventory-product"><span className="inventory-product-icon"><PackageCheck size={17}/></span><span><strong>{row.product_name}</strong><small>{row.sku} · batch {row.batch_id ?? 'tanpa batch'}</small></span></div>
+        <div className="inventory-qty"><strong>{row.quantity} {row.base_unit}</strong><small>{warehouseName(row.warehouse_id)} · minimum {row.minimum_stock} {row.base_unit}</small></div>
         <span className={`status-pill quality-${row.quality_status ?? 'pending'}`}>{statusLabels[row.quality_status ?? 'pending'] ?? 'Status belum diketahui'}</span>
-        {row.batch_id && <div className="inspection-actions"><button className="secondary-button" onClick={() => void openTrace(row.batch_id!)}><Search size={13}/> Lacak batch</button>{row.quality_status === 'pending' && <><button className="secondary-button pass" disabled={busy === row.batch_id} onClick={() => void inspect(row.batch_id!, 'passed')}><Check size={13}/> Lulus inspeksi</button><button className="secondary-button quarantine" disabled={busy === row.batch_id} onClick={() => void inspect(row.batch_id!, 'quarantined')}><ShieldAlert size={13}/> Karantina</button></>}{busy === row.batch_id && <LoaderCircle size={15} className="spin"/>}</div>}
+        {row.batch_id && <div className="inspection-actions"><button className="secondary-button" onClick={() => void openTrace(row.batch_id!)}><Search size={13}/> Lacak batch</button>{row.quality_status === 'pending' && (confirmInspect?.batchId === row.batch_id ? <span className="inline-confirm-box"><small>{confirmInspect.result === 'passed' ? 'Luluskan batch?' : 'Karantina batch?'}</small><button className="secondary-button pass" disabled={busy === row.batch_id} onClick={() => void inspect(row.batch_id!, confirmInspect.result)}>Ya, simpan</button><button className="secondary-button" onClick={() => setConfirmInspect(null)}>Batal</button></span> : <><button className="secondary-button pass" disabled={busy === row.batch_id} onClick={() => setConfirmInspect({ batchId: row.batch_id!, result: 'passed' })}><Check size={13}/> Lulus inspeksi</button><button className="secondary-button quarantine" disabled={busy === row.batch_id} onClick={() => setConfirmInspect({ batchId: row.batch_id!, result: 'quarantined' })}><ShieldAlert size={13}/> Karantina</button></>)}{busy === row.batch_id && <LoaderCircle size={15} className="spin"/>}</div>}
       </article>)}</div>}
     </section>
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, CircleAlert, Download, LoaderCircle, ReceiptText } from 'lucide-react';
 import type { BranchContext } from '../../domain/erp/ErpTypes';
 import type { OperationsRepository, Row } from '../../domain/operations/OperationsTypes';
+import { getErrorMessage } from '../../domain/shared/errorMessage';
 
 const dateToday=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta'}).format(new Date());
 const money=(value:unknown)=>new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(Number(value||0));
@@ -9,10 +10,10 @@ const text=(value:unknown)=>String(value??'');
 
 export function ReceivablesPage({repository,context,onInvoice}:{repository:OperationsRepository;context:BranchContext;onInvoice:(saleId:string)=>void}){
  const [rows,setRows]=useState<Row[]>([]);const [dueDates,setDueDates]=useState<Record<string,string>>({});const [loading,setLoading]=useState(true);const [saving,setSaving]=useState('');const [error,setError]=useState('');const [notice,setNotice]=useState('');
- async function load(){setLoading(true);setError('');try{setRows(await repository.getReceivables(context.companyId,context.branchId,dateToday()));}catch(cause){setError(cause instanceof Error?cause.message:'Piutang gagal dimuat.');}finally{setLoading(false);}}
+ async function load(){setLoading(true);setError('');try{setRows(await repository.getReceivables(context.companyId,context.branchId,dateToday()));}catch(cause){setError(getErrorMessage(cause,'Piutang gagal dimuat.'));}finally{setLoading(false);}}
  useEffect(()=>{void load();},[repository,context.companyId,context.branchId]);
  const totals=useMemo(()=>rows.reduce<{balance:number;overdue:number;count:number}>((a,r)=>({balance:a.balance+Number(r.outstanding||0),overdue:a.overdue+(Number(r.days_overdue||0)>0?1:0),count:a.count+1}),{balance:0,overdue:0,count:0}),[rows]);
- async function saveDueDate(row:Row){setSaving(text(row.sale_id));setError('');setNotice('');try{await repository.setSalesDueDate(text(row.sale_id),dueDates[text(row.sale_id)]||null);setNotice('Tanggal jatuh tempo berhasil disimpan.');await load();}catch(cause){setError(cause instanceof Error?cause.message:'Tanggal jatuh tempo gagal disimpan.');}finally{setSaving('');}}
+ async function saveDueDate(row:Row){setSaving(text(row.sale_id));setError('');setNotice('');try{await repository.setSalesDueDate(text(row.sale_id),dueDates[text(row.sale_id)]||null);setNotice('Tanggal jatuh tempo berhasil disimpan.');await load();}catch(cause){setError(getErrorMessage(cause,'Tanggal jatuh tempo gagal disimpan.'));}finally{setSaving('');}}
  function exportCsv(){const data=[['Invoice','Pelanggan','Tanggal','Jatuh tempo','Umur','Status umur','Total','Dibayar','Sisa'],...rows.map(r=>[r.document_number,r.customer_name,r.invoice_date,r.due_date,r.days_overdue,r.aging_bucket,r.invoice_total,r.paid_total,r.outstanding])];const csv=data.map(r=>r.map(v=>`"${String(v??'').replaceAll('"','""')}"`).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob(['\ufeff',csv],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=`piutang-${dateToday()}.csv`;link.click();URL.revokeObjectURL(url);}
  return <div className="erp-page"><header className="page-heading"><div><p className="eyebrow">KEUANGAN · PELANGGAN</p><h1>Piutang pelanggan</h1><p className="page-subtitle">Pantau invoice belum lunas, umur tagihan, dan jatuh tempo pada cabang aktif.</p></div><span className="live-badge page-live"><i/> DATA LIVE</span></header>
   {error&&<div className="load-error" role="alert"><CircleAlert size={16}/>{error}</div>}{notice&&<div className="success-notice">{notice}</div>}

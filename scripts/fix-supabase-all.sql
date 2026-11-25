@@ -180,3 +180,104 @@ drop policy if exists company_owner_update on public.companies;
 create policy company_owner_update on public.companies for update to authenticated
   using (private.has_any_role(id, array['owner','super_admin','central_admin']::public.app_role[]))
   with check (private.has_any_role(id, array['owner','super_admin','central_admin']::public.app_role[]));
+
+-- 9. PERBAIKI RPC DIREKTORI AKSES PENGGUNA (cast auth.users.email -> text agar cocok return table)
+create or replace function public.get_user_access_directory(p_company_id uuid)
+returns table(user_id uuid,email text,display_name text,roles text[],branch_ids uuid[])
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not private.has_company_access(p_company_id)
+    or not private.has_any_role(p_company_id,array['owner','super_admin','central_admin']::public.app_role[]) then
+    raise exception 'Hak lihat pengguna perusahaan ditolak' using errcode='42501';
+  end if;
+  return query
+    select u.id,u.email::text,p.display_name,
+      coalesce(array_agg(distinct ur.role::text) filter(where ur.role is not null),array[]::text[]),
+      coalesce(array_agg(distinct ba.branch_id) filter(where ba.branch_id is not null),array[]::uuid[])
+    from auth.users u
+    left join public.profiles p on p.user_id=u.id
+    left join public.user_roles ur on ur.company_id=p_company_id and ur.user_id=u.id
+    left join public.user_branch_access ba on ba.company_id=p_company_id and ba.user_id=u.id
+    group by u.id,u.email,p.display_name order by u.email;
+end $$;
+
+revoke execute on function public.get_user_access_directory(uuid) from public,anon;
+grant execute on function public.get_user_access_directory(uuid) to authenticated;
+
+-- 10. PERBAIKI RPC POSTING PRODUKSI (hindari tabrakan variabel loop record vs jsonb v_line)
+create or replace function public.post_production_batch(p_payload jsonb, p_idempotency_key uuid)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_user uuid:=auth.uid(); v_company uuid:=(p_payload->>'company_id')::uuid; v_branch uuid:=(p_payload->>'branch_id')::uuid;
+  v_warehouse uuid:=(p_payload->>'warehouse_id')::uuid; v_prod uuid:=gen_random_uuid(); v_doc text; v_line jsonb;
+  v_product public.products%rowtype; v_unit public.product_units%rowtype; v_batch public.product_batches%rowtype;
+  v_qty numeric(14,3); v_base numeric(14,3); v_balance numeric(14,3); v_output_batch uuid; v_output_id uuid;
+  v_input_id uuid; v_number text; v_old jsonb; v_result jsonb; v_out record;
+begin
+  if v_user is null then raise exception 'Authentication required' using errcode='42501'; end if;
+  if not private.has_branch_access(v_company,v_branch) then raise exception 'Branch access denied' using errcode='42501'; end if;
+  if not private.has_any_role(v_company,array['owner','super_admin','central_admin','branch_admin','production','supervisor']::public.app_role[]) then raise exception 'Production permission denied' using errcode='42501'; end if;
+  if p_idempotency_key is null or jsonb_typeof(p_payload->'inputs') <> 'array' or jsonb_array_length(p_payload->'inputs')=0 or jsonb_typeof(p_payload->'outputs') <> 'array' or jsonb_array_length(p_payload->'outputs')=0 then raise exception 'Production inputs and outputs are required'; end if;
+  insert into public.idempotency_keys(company_id,user_id,idempotency_key,operation) values(v_company,v_user,p_idempotency_key,'post_production_batch') on conflict do nothing;
+  select response into v_old from public.idempotency_keys where company_id=v_company and user_id=v_user and idempotency_key=p_idempotency_key for update;
+  if v_old is not null then return v_old; end if;
+  if not exists(select 1 from public.warehouses w where w.company_id=v_company and w.branch_id=v_branch and w.id=v_warehouse and w.is_active) then raise exception 'Warehouse is unavailable'; end if;
+  v_doc:=private.next_document_number(v_company,v_branch,'production');
+  insert into public.production_batches(id,company_id,branch_id,warehouse_id,batch_number,status,notes,idempotency_key,created_by)
+    values(v_prod,v_company,v_branch,v_warehouse,v_doc,'posted',nullif(p_payload->>'notes',''),p_idempotency_key,v_user);
+  for v_line in select value from jsonb_array_elements(p_payload->'inputs') loop
+    select * into v_product from public.products p where p.company_id=v_company and p.id=(v_line->>'product_id')::uuid and p.is_active;
+    if not found then raise exception 'Input product is unavailable'; end if;
+    select * into v_unit from public.product_units u where u.company_id=v_company and u.product_id=v_product.id and u.unit_code=(v_line->>'unit_code');
+    if not found then raise exception 'Input unit is not configured'; end if;
+    select * into v_batch from public.product_batches b where b.company_id=v_company and b.branch_id=v_branch and b.product_id=v_product.id and b.id=(v_line->>'batch_id')::uuid and b.quality_status='passed';
+    if not found then raise exception 'Input batch is unavailable or has not passed quality inspection'; end if;
+    v_qty:=(v_line->>'quantity')::numeric; if v_qty is null or v_qty<=0 then raise exception 'Input quantity must be greater than zero'; end if;
+    v_base:=round(v_qty*v_unit.base_units_per_unit,3);
+    insert into public.production_inputs(company_id,branch_id,production_batch_id,product_id,batch_id,quantity,unit_code,base_quantity)
+      values(v_company,v_branch,v_prod,v_product.id,v_batch.id,v_qty,v_unit.unit_code,v_base) returning id into v_input_id;
+    update public.inventory_balances b set quantity=b.quantity-v_base,updated_at=now()
+      where b.company_id=v_company and b.warehouse_id=v_warehouse and b.product_id=v_product.id and b.batch_key=v_batch.id::text and b.quantity>=v_base returning b.quantity into v_balance;
+    if not found then raise exception 'Insufficient stock for input product %',v_product.name using errcode='23514'; end if;
+    insert into public.inventory_movements(company_id,branch_id,warehouse_id,product_id,batch_id,movement_type,quantity_delta,unit_code,source_type,source_id,idempotency_key,created_by)
+      values(v_company,v_branch,v_warehouse,v_product.id,v_batch.id,'production_input',-v_base,v_product.base_unit,'production_input',v_input_id,gen_random_uuid(),v_user);
+  end loop;
+  for v_line in select value from jsonb_array_elements(p_payload->'outputs') loop
+    select * into v_product from public.products p where p.company_id=v_company and p.id=(v_line->>'product_id')::uuid and p.is_active;
+    if not found then raise exception 'Output product is unavailable'; end if;
+    select * into v_unit from public.product_units u where u.company_id=v_company and u.product_id=v_product.id and u.unit_code=(v_line->>'unit_code');
+    if not found then raise exception 'Output unit is not configured'; end if;
+    v_qty:=(v_line->>'quantity')::numeric; if v_qty is null or v_qty<=0 then raise exception 'Output quantity must be greater than zero'; end if;
+    if v_product.base_unit<>'kg' and not exists(select 1 from public.product_units kg where kg.company_id=v_company and kg.product_id=v_product.id and kg.unit_code='kg' and kg.base_units_per_unit>0) then
+      raise exception 'Atur konversi kg produk % sebelum memakai alokasi HPP berdasarkan berat',v_product.name;
+    end if;
+    v_base:=round(v_qty*v_unit.base_units_per_unit,3); v_output_batch:=gen_random_uuid();
+    v_number:=coalesce(nullif(v_line->>'batch_number',''),v_doc||'-'||v_product.sku||'-'||left(v_output_batch::text,4));
+    insert into public.product_batches(id,company_id,branch_id,product_id,batch_number,source_type,source_id,produced_at,quality_status)
+      values(v_output_batch,v_company,v_branch,v_product.id,v_number,'production',v_prod,now(),'pending');
+    insert into public.production_outputs(company_id,branch_id,production_batch_id,product_id,batch_id,quantity,unit_code,base_quantity)
+      values(v_company,v_branch,v_prod,v_product.id,v_output_batch,v_qty,v_unit.unit_code,v_base) returning id into v_output_id;
+    insert into public.inventory_balances(company_id,branch_id,warehouse_id,product_id,batch_id,quantity)
+      values(v_company,v_branch,v_warehouse,v_product.id,v_output_batch,v_base);
+  end loop;
+  for v_out in select id,product_id,batch_id,base_quantity from public.production_outputs where company_id=v_company and production_batch_id=v_prod loop
+    select * into v_product from public.products where company_id=v_company and id=v_out.product_id;
+    insert into public.inventory_movements(company_id,branch_id,warehouse_id,product_id,batch_id,movement_type,quantity_delta,unit_code,source_type,source_id,idempotency_key,created_by)
+      values(v_company,v_branch,v_warehouse,v_out.product_id,v_out.batch_id,'production_output',v_out.base_quantity,v_product.base_unit,'production_output',v_out.id,gen_random_uuid(),v_user);
+  end loop;
+  if jsonb_typeof(p_payload->'waste')='array' then
+    for v_line in select value from jsonb_array_elements(p_payload->'waste') loop
+      v_qty:=(v_line->>'quantity')::numeric;
+      if v_qty is null or v_qty<=0 or nullif(v_line->>'reason','') is null then raise exception 'Waste entries need a positive quantity and a reason'; end if;
+      insert into public.waste_records(company_id,branch_id,production_batch_id,quantity,unit_code,reason,created_by)
+        values(v_company,v_branch,v_prod,v_qty,v_line->>'unit_code',v_line->>'reason',v_user);
+    end loop;
+  end if;
+  v_result:=jsonb_build_object('production_batch_id',v_prod,'batch_number',v_doc,'status','posted','quality_status','pending');
+  update public.idempotency_keys set response=v_result where company_id=v_company and user_id=v_user and idempotency_key=p_idempotency_key;
+  return v_result;
+end
+$$;
+
+revoke execute on function public.post_production_batch(jsonb,uuid) from public,anon;
+grant execute on function public.post_production_batch(jsonb,uuid) to authenticated;

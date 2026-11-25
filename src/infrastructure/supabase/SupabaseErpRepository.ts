@@ -95,7 +95,7 @@ export class SupabaseErpRepository implements ErpRepository {
     const { data, error } = await this.client.rpc('record_customer_payment_v2', { p_payload: payload, p_idempotency_key: key }); if (error) throw error; return data as TransactionResult;
   }
   async listScans(context: BranchContext) {
-    const { data, error } = await this.client.from('scanned_documents').select('id,storage_path,mime_type,status,created_at,reviewed_at,source_hash,ocr_extractions(id,extracted_data,confidence,warnings)').eq('company_id', context.companyId).eq('branch_id', context.branchId).order('created_at', { ascending: false }).limit(50);
+    const { data, error } = await this.client.from('scanned_documents').select('id,storage_path,mime_type,status,created_at,reviewed_at,source_hash,ocr_extractions!ocr_extractions_scanned_document_id_fkey(id,extracted_data,confidence,warnings)').eq('company_id', context.companyId).eq('branch_id', context.branchId).order('created_at', { ascending: false }).limit(50);
     if (error) throw error;
     return asRows<Record<string, unknown>>(data).map((row) => ({ ...row, extraction: Array.isArray(row.ocr_extractions) ? (row.ocr_extractions[0] ?? null) : null } as ScanRecord));
   }

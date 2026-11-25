@@ -170,7 +170,7 @@ declare
   v_warehouse uuid:=(p_payload->>'warehouse_id')::uuid; v_prod uuid:=gen_random_uuid(); v_doc text; v_line jsonb;
   v_product public.products%rowtype; v_unit public.product_units%rowtype; v_batch public.product_batches%rowtype;
   v_qty numeric(14,3); v_base numeric(14,3); v_balance numeric(14,3); v_output_batch uuid; v_output_id uuid;
-  v_input_id uuid; v_number text; v_old jsonb; v_result jsonb;
+  v_input_id uuid; v_number text; v_old jsonb; v_result jsonb; v_out record;
 begin
   if v_user is null then raise exception 'Authentication required' using errcode='42501'; end if;
   if not private.has_branch_access(v_company,v_branch) then raise exception 'Branch access denied' using errcode='42501'; end if;
@@ -218,10 +218,10 @@ begin
     insert into public.inventory_balances(company_id,branch_id,warehouse_id,product_id,batch_id,quantity)
       values(v_company,v_branch,v_warehouse,v_product.id,v_output_batch,v_base);
   end loop;
-  for v_line in select id,product_id,batch_id,base_quantity from public.production_outputs where company_id=v_company and production_batch_id=v_prod loop
-    select * into v_product from public.products where company_id=v_company and id=v_line.product_id;
+  for v_out in select id,product_id,batch_id,base_quantity from public.production_outputs where company_id=v_company and production_batch_id=v_prod loop
+    select * into v_product from public.products where company_id=v_company and id=v_out.product_id;
     insert into public.inventory_movements(company_id,branch_id,warehouse_id,product_id,batch_id,movement_type,quantity_delta,unit_code,source_type,source_id,idempotency_key,created_by)
-      values(v_company,v_branch,v_warehouse,v_line.product_id,v_line.batch_id,'production_output',v_line.base_quantity,v_product.base_unit,'production_output',v_line.id,gen_random_uuid(),v_user);
+      values(v_company,v_branch,v_warehouse,v_out.product_id,v_out.batch_id,'production_output',v_out.base_quantity,v_product.base_unit,'production_output',v_out.id,gen_random_uuid(),v_user);
   end loop;
   if jsonb_typeof(p_payload->'waste')='array' then
     for v_line in select value from jsonb_array_elements(p_payload->'waste') loop

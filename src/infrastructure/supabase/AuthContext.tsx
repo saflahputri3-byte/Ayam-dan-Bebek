@@ -44,6 +44,7 @@ export function AuthProvider({ client, children }: { client: SupabaseClient; chi
 
   const enterDemoMode = useCallback((presetRole = 'owner') => {
     localStorage.setItem('agi_demo_mode', 'true');
+    localStorage.setItem('agi_demo_role', presetRole);
     setIsDemoMode(true);
     const roleList = presetRole === 'owner'
       ? ['owner', 'super_admin', 'central_admin', 'branch_admin']
@@ -65,10 +66,14 @@ export function AuthProvider({ client, children }: { client: SupabaseClient; chi
 
   useEffect(() => {
     if (isDemoMode) {
+      const savedRole = localStorage.getItem('agi_demo_role') || 'owner';
+      const roleList = savedRole === 'owner'
+        ? ['owner', 'super_admin', 'central_admin', 'branch_admin']
+        : [savedRole];
       setBranches(DEMO_BRANCHES);
       setSelectedBranchId((current) => current || DEMO_BRANCH_PUSAT_ID);
-      setRoles((current) => current.length ? current : ['owner', 'super_admin', 'central_admin', 'branch_admin']);
-      setSession({ user: { id: DEMO_USER_ID, email: 'owner@agi.id' } } as unknown as Session);
+      setRoles((current) => current.length ? current : roleList);
+      setSession({ user: { id: DEMO_USER_ID, email: `${savedRole}@agi.id` } } as unknown as Session);
       setLoading(false);
       setWorkspaceLoading(false);
       return;
@@ -93,7 +98,7 @@ export function AuthProvider({ client, children }: { client: SupabaseClient; chi
     if (isDemoMode) return;
     if (!session?.user.id) { setBranches([]); setRoles([]); setSelectedBranchId(''); setWorkspaceLoading(false); return; }
     let cancelled = false;
-    setWorkspaceLoading(true);
+    setWorkspaceLoading((current) => branches.length === 0 ? true : current);
     void (async () => {
       const { data: roleData, error: roleError } = await client.from('user_roles').select('company_id,role').eq('user_id', session.user.id);
       if (roleError) throw roleError;
@@ -144,6 +149,7 @@ export function AuthProvider({ client, children }: { client: SupabaseClient; chi
   const signOut = useCallback(async () => {
     if (isDemoMode) {
       localStorage.removeItem('agi_demo_mode');
+      localStorage.removeItem('agi_demo_role');
       setIsDemoMode(false);
       setSession(null);
       setBranches([]);

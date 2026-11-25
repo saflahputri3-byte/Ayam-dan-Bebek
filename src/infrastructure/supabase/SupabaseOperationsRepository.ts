@@ -12,7 +12,7 @@ export class SupabaseOperationsRepository implements OperationsRepository {
     if (error) throw error; return rows<Row>(data);
   }
   async getTransfers(c: BranchContext) {
-    const { data, error } = await this.client.from('stock_transfers').select('*,stock_transfer_items(*,products(name,sku),product_batches(batch_number))').eq('company_id', c.companyId).or(`source_branch_id.eq.${c.branchId},destination_branch_id.eq.${c.branchId}`).order('created_at', { ascending: false }).limit(100);
+    const { data, error } = await this.client.from('stock_transfers').select('*,stock_transfer_items(*,products(name,sku),product_batches!stock_transfer_items_company_id_source_batch_id_fkey(batch_number))').eq('company_id', c.companyId).or(`source_branch_id.eq.${c.branchId},destination_branch_id.eq.${c.branchId}`).order('created_at', { ascending: false }).limit(100);
     if (error) throw error; return rows<Row>(data);
   }
   async createTransfer(payload: Row, idempotency: string) { const { data, error } = await this.client.rpc('create_stock_transfer', { p_payload: payload, p_idempotency_key: idempotency }); if (error) throw error; return data as Row; }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { CircleAlert, Files, LoaderCircle, ReceiptText } from 'lucide-react';
 import type { BranchContext, SaleListItem } from '../../domain/erp/ErpTypes';
 import type { ErpRepository } from '../../application/ports/ErpRepository';
+import { getErrorMessage } from '../../domain/shared/errorMessage';
 
 const money = (amount: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(amount);
 
@@ -9,7 +10,7 @@ export function DocumentsPage({ repository, context, onInvoice }: { repository: 
   const [sales, setSales] = useState<SaleListItem[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
   useEffect(() => {
     let active = true;
-    void repository.getSales(context).then((rows) => { if (active) setSales(rows); }).catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : 'Dokumen gagal dimuat.'); }).finally(() => { if (active) setLoading(false); });
+    void repository.getSales(context).then((rows) => { if (active) setSales(rows); }).catch((cause: unknown) => { if (active) setError(getErrorMessage(cause, 'Dokumen gagal dimuat.')); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [repository, context.companyId, context.branchId]);
   return <div className="erp-page"><header className="page-heading"><div><p className="eyebrow">PENJUALAN · ARSIP</p><h1>Invoice & dokumen</h1><p className="page-subtitle">Lihat invoice penjualan tersimpan di cabang aktif dan buka untuk mencetak atau mencatat pembayaran.</p></div><span className="live-badge page-live"><i/> ARSIP LIVE</span></header>

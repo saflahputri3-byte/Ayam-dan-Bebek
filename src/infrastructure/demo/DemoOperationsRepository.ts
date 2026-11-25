@@ -1,10 +1,10 @@
 import type { OperationsRepository, Row } from '../../domain/operations/OperationsTypes';
 import type { BranchContext, InventoryRow } from '../../domain/erp/ErpTypes';
-import { demoStore } from './DemoErpStore';
+import { DEMO_BRANCH_PUSAT_ID, demoStore } from './DemoErpStore';
 
 export class DemoOperationsRepository implements OperationsRepository {
-  async getTransfers(_context: BranchContext): Promise<Row[]> {
-    return [...demoStore.transfers];
+  async getTransfers(context: BranchContext): Promise<Row[]> {
+    return demoStore.transfers.filter((t) => t.source_branch_id === context.branchId || t.destination_branch_id === context.branchId);
   }
 
   async createTransfer(payload: Row, _key: string): Promise<Row> {
@@ -122,24 +122,35 @@ export class DemoOperationsRepository implements OperationsRepository {
     if (del) del.status = status;
   }
 
-  async getPayables(_companyId: string, _branchId: string, _asOf: string): Promise<Row[]> {
-    return [
-      {
-        purchase_id: 'po-003',
-        document_number: 'PO-2026-11-003',
-        supplier_name: 'CV Berkah Farm Mandiri',
-        balance: 5_500_000,
-        received_total: 5_500_000,
-        paid_total: 0,
-        due_date: demoStore.dueDates['po-003'] ?? '2026-11-25',
-        days_overdue: 0,
-      },
-    ];
+  async getPayables(_companyId: string, branchId: string, _asOf: string): Promise<Row[]> {
+    return demoStore.purchases
+      .filter((po) => (demoStore.purchaseBranchIds[po.id] ?? DEMO_BRANCH_PUSAT_ID) === branchId)
+      .map((po) => {
+        const receivedTotal = po.items.reduce((sum, item) => {
+          const unit = demoStore.productUnits.find((u) => u.product_id === item.product_id && u.unit_code === item.unit_code);
+          const ratio = unit?.base_units_per_unit ?? 1;
+          const receivedQty = item.received_base_quantity / ratio;
+          return sum + Math.round(receivedQty * item.unit_price);
+        }, 0);
+        const paidTotal = demoStore.purchasePaidTotals[po.id] ?? 0;
+        const balance = Math.max(0, receivedTotal - paidTotal);
+        return {
+          purchase_id: po.id,
+          document_number: po.document_number,
+          supplier_name: po.supplier_name,
+          balance,
+          received_total: receivedTotal,
+          paid_total: paidTotal,
+          due_date: demoStore.dueDates[po.id] ?? '2026-11-25',
+          days_overdue: 0,
+        };
+      })
+      .filter((row) => row.received_total > 0 && row.balance > 0);
   }
 
-  async getReceivables(_companyId: string, _branchId: string, _asOf: string): Promise<Row[]> {
+  async getReceivables(_companyId: string, branchId: string, _asOf: string): Promise<Row[]> {
     return demoStore.sales
-      .filter((s) => s.paid_amount < s.total_amount)
+      .filter((s) => (demoStore.saleBranchIds[s.id] ?? DEMO_BRANCH_PUSAT_ID) === branchId && s.paid_amount < s.total_amount)
       .map((s) => ({
         sale_id: s.id,
         document_number: s.document_number,
@@ -164,7 +175,16 @@ export class DemoOperationsRepository implements OperationsRepository {
 
   async recordSupplierPayment(payload: Row, _key: string): Promise<Row> {
     const docNumber = `PAY-SUP-2026-${String(Date.now()).slice(-3)}`;
-    return { id: `pay-${Date.now()}`, document_number: docNumber, amount: payload.amount };
+    const amount = Number(payload.amount || 0);
+    const allocations = Array.isArray(payload.allocations) ? (payload.allocations as Array<{ purchase_id: string; amount: number }>) : [];
+    for (const alloc of allocations) {
+      demoStore.purchasePaidTotals[alloc.purchase_id] = (demoStore.purchasePaidTotals[alloc.purchase_id] ?? 0) + Number(alloc.amount || 0);
+    }
+    const cashAcc = demoStore.cashAccounts.find((a) => a.id === payload.cash_account_id);
+    if (cashAcc) {
+      cashAcc.balance = Math.max(0, cashAcc.balance - amount);
+    }
+    return { id: `pay-${Date.now()}`, document_number: docNumber, amount };
   }
 
   async getFinanceAccounts(_companyId: string): Promise<Row[]> {

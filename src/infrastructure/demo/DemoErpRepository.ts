@@ -154,8 +154,8 @@ export class DemoErpRepository implements ErpRepository {
     };
   }
 
-  async getSales(_context: BranchContext): Promise<SaleListItem[]> {
-    return [...demoStore.sales];
+  async getSales(context: BranchContext): Promise<SaleListItem[]> {
+    return demoStore.sales.filter((s) => (demoStore.saleBranchIds[s.id] ?? DEMO_BRANCH_PUSAT_ID) === context.branchId);
   }
 
   async postSale(command: SaleCommand, _idempotencyKey: string): Promise<TransactionResult> {
@@ -203,8 +203,10 @@ export class DemoErpRepository implements ErpRepository {
       status: 'posted',
       created_at: new Date().toISOString(),
     };
+    demoStore.saleBranchIds[saleId] = command.branchId;
     demoStore.sales.unshift(newSaleItem);
 
+    const branchInfo = demoStore.branches.find((b) => b.id === command.branchId);
     demoStore.saleDetails[saleId] = {
       id: saleId,
       document_number: docNumber,
@@ -215,7 +217,7 @@ export class DemoErpRepository implements ErpRepository {
       total_amount: total,
       paid_amount: 0,
       notes: command.notes ?? '',
-      branch: { name: 'Cabang Utama (Pusat)', address: 'Kawasan Sentra Niaga Rantai Dingin Kav. 8, Jakarta', phone: '021-7890-1234' },
+      branch: { name: String(branchInfo?.name ?? 'Cabang Utama (Pusat)'), address: String(branchInfo?.address ?? ''), phone: String(branchInfo?.phone ?? '') },
       customer: cust ? { id: cust.id, code: cust.code, name: cust.name, address: cust.address ?? null, phone: cust.phone ?? null } : null,
       items: command.items.map((it) => {
         const prod = demoStore.products.find((p) => p.id === it.product_id);
@@ -248,8 +250,8 @@ export class DemoErpRepository implements ErpRepository {
     };
   }
 
-  async getPurchases(_context: BranchContext): Promise<Purchase[]> {
-    return [...demoStore.purchases];
+  async getPurchases(context: BranchContext): Promise<Purchase[]> {
+    return demoStore.purchases.filter((p) => (demoStore.purchaseBranchIds[p.id] ?? DEMO_BRANCH_PUSAT_ID) === context.branchId);
   }
 
   async createPurchase(command: PurchaseCommand, _idempotencyKey: string): Promise<TransactionResult> {
@@ -258,6 +260,7 @@ export class DemoErpRepository implements ErpRepository {
     const supp = demoStore.suppliers.find((s) => s.id === command.supplier_id);
     const total = command.items.reduce((s, it) => s + it.quantity * it.unit_price, 0);
 
+    demoStore.purchaseBranchIds[pId] = command.branchId;
     demoStore.purchases.unshift({
       id: pId,
       supplier_id: command.supplier_id,
@@ -268,6 +271,8 @@ export class DemoErpRepository implements ErpRepository {
       created_at: new Date().toISOString(),
       items: command.items.map((it, idx) => {
         const prod = demoStore.products.find((p) => p.id === it.product_id);
+        const unit = demoStore.productUnits.find((u) => u.product_id === it.product_id && u.unit_code === it.unit_code);
+        const ratio = unit?.base_units_per_unit ?? 1;
         return {
           id: `poi-${Date.now()}-${idx}`,
           product_id: it.product_id,
@@ -276,7 +281,7 @@ export class DemoErpRepository implements ErpRepository {
           quantity: it.quantity,
           unit_code: it.unit_code,
           unit_price: it.unit_price,
-          base_quantity: it.quantity,
+          base_quantity: it.quantity * ratio,
           received_base_quantity: 0,
         };
       }),
@@ -293,11 +298,21 @@ export class DemoErpRepository implements ErpRepository {
   async receivePurchase(command: ReceiptCommand, _idempotencyKey: string): Promise<TransactionResult> {
     const docNumber = `RCV-2026-11-${String(Date.now()).slice(-3)}`;
     const po = demoStore.purchases.find((p) => p.id === command.purchase_id);
-    if (po) po.status = 'partially_received';
 
     for (const item of command.items) {
       const prod = demoStore.products.find((p) => p.id === item.product_id);
-      const batchId = `BATCH-RCV-${String(Date.now()).slice(-4)}`;
+      const unit = demoStore.productUnits.find((u) => u.product_id === item.product_id && u.unit_code === item.unit_code);
+      const ratio = unit?.base_units_per_unit ?? 1;
+      const receivedBase = item.quantity * ratio;
+
+      if (po) {
+        const poItem = po.items.find((entry) => entry.id === item.purchase_item_id || entry.product_id === item.product_id);
+        if (poItem) {
+          poItem.received_base_quantity = Math.min(poItem.base_quantity, poItem.received_base_quantity + receivedBase);
+        }
+      }
+
+      const batchId = `BATCH-RCV-${String(Date.now()).slice(-4)}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
       demoStore.inventory.unshift({
         branch_id: command.branchId,
         warehouse_id: command.warehouse_id,
@@ -305,14 +320,14 @@ export class DemoErpRepository implements ErpRepository {
         product_name: prod?.name ?? 'Produk Masuk',
         sku: prod?.sku ?? '',
         species: prod?.species ?? 'chicken',
-        base_unit: item.unit_code,
+        base_unit: prod?.base_unit ?? item.unit_code,
         batch_id: batchId,
-        quantity: item.quantity,
-        minimum_stock: 10,
+        quantity: receivedBase,
+        minimum_stock: prod?.minimum_stock ?? 10,
         quality_status: 'pending',
       });
       demoStore.inventoryMovements.unshift({
-        movement_id: `mov-${Date.now()}`,
+        movement_id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
         branch_id: command.branchId,
         warehouse_id: command.warehouse_id,
         warehouse_name: demoStore.warehouses.find((w) => w.id === command.warehouse_id)?.name as string ?? 'Gudang Utama',
@@ -322,12 +337,17 @@ export class DemoErpRepository implements ErpRepository {
         batch_id: batchId,
         batch_number: batchId,
         movement_type: 'receipt',
-        quantity_delta: item.quantity,
-        unit_code: item.unit_code,
+        quantity_delta: receivedBase,
+        unit_code: prod?.base_unit ?? item.unit_code,
         source_type: 'receipt',
         source_reference: docNumber,
         created_at: new Date().toISOString(),
       });
+    }
+
+    if (po) {
+      const allReceived = po.items.every((entry) => entry.received_base_quantity >= entry.base_quantity - 0.0001);
+      po.status = allReceived ? 'received' : 'partially_received';
     }
 
     return { status: 'received', document_number: docNumber };

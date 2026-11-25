@@ -25,7 +25,7 @@ import './presentation/styles.css';
 function AuthenticatedApplication() {
   const workspace = useWorkspace();
   const repository = useMemo(() => {
-    if (workspace.isDemoMode) return new DemoDashboardRepository();
+    if (workspace.isDemoMode) return new DemoDashboardRepository(workspace.activeBranch?.id);
     return workspace.activeBranch && supabase ? new SupabaseDashboardRepository(supabase, workspace.activeBranch.company_id, workspace.activeBranch.id) : null;
   }, [workspace.isDemoMode, workspace.activeBranch?.company_id, workspace.activeBranch?.id]);
 
@@ -66,8 +66,15 @@ function AuthenticatedApplication() {
   if (!workspace.activeBranch) return <main className="auth-screen"><section className="auth-card"><p className="eyebrow">WORKSPACE BELUM DITETAPKAN</p><h1>Hubungi administrator</h1><p className="setup-copy">Akun Anda belum memiliki peran perusahaan dan akses cabang aktif. Administrator perlu menambahkan peran serta cabang melalui Supabase sebelum aplikasi dapat digunakan.</p><button className="auth-submit" onClick={() => void workspace.signOut()}>Keluar</button></section></main>;
   if (!repository || !context) return null;
 
+  const demoNames: Record<string, string> = {
+    owner: 'Budi Santoso (Owner)',
+    cashier: 'Dewi Lestari (Kasir)',
+    production: 'Hendra Pratama (Produksi)',
+    warehouse: 'Joko Susilo (Gudang)',
+    finance: 'Siti Rahmawati (Keuangan)',
+  };
   const userName = workspace.isDemoMode
-    ? 'Budi Santoso (Owner)'
+    ? (demoNames[workspace.roles[0] ?? 'owner'] ?? 'Budi Santoso (Owner)')
     : workspace.session.user.email?.split('@')[0] ?? 'Pengguna';
 
   return (

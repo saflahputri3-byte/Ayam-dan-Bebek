@@ -134,7 +134,7 @@ begin
     raise exception 'Hak lihat pengguna perusahaan ditolak' using errcode='42501';
   end if;
   return query
-    select u.id,u.email,p.display_name,
+    select u.id,u.email::text,p.display_name,
       coalesce(array_agg(distinct ur.role::text) filter(where ur.role is not null),array[]::text[]),
       coalesce(array_agg(distinct ba.branch_id) filter(where ba.branch_id is not null),array[]::uuid[])
     from auth.users u

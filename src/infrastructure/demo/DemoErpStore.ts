@@ -113,6 +113,7 @@ export class DemoErpStore {
     { branch_id: DEMO_BRANCH_PUSAT_ID, warehouse_id: 'wh-cold', product_id: 'prod-bebek-karkas', product_name: 'Bebek Karkas Super Fresh', sku: 'AGI-BEBEK-KARKAS', species: 'duck', base_unit: 'kg', batch_id: 'BATCH-BEBEK-01', quantity: 190, minimum_stock: 40, quality_status: 'passed' },
     { branch_id: DEMO_BRANCH_PUSAT_ID, warehouse_id: 'wh-cold', product_id: 'prod-bebek-ungkep', product_name: 'Bebek Ungkep Bumbu Kuning', sku: 'AGI-BEBEK-UNGKEP', species: 'duck', base_unit: 'pcs', batch_id: 'BATCH-UNGKEP-01', quantity: 85, minimum_stock: 25, quality_status: 'passed' },
     { branch_id: DEMO_BRANCH_PUSAT_ID, warehouse_id: 'wh-utama', product_id: 'prod-ayam-hidup', product_name: 'Ayam Broiler Hidup (Bahan Masuk RPA)', sku: 'AGI-AYAM-RAW', species: 'chicken', base_unit: 'kg', batch_id: 'BATCH-RAW-MASUK-02', quantity: 250, minimum_stock: 100, quality_status: 'pending' },
+    { branch_id: DEMO_BRANCH_BARAT_ID, warehouse_id: 'wh-barat', product_id: 'prod-ayam-karkas', product_name: 'Ayam Broiler Utuh / Karkas', sku: 'AGI-AYAM-KARKAS', species: 'chicken', base_unit: 'kg', batch_id: 'BATCH-BARAT-01', quantity: 60, minimum_stock: 20, quality_status: 'passed' },
   ];
 
   inventoryMovements: InventoryMovement[] = [
@@ -305,7 +306,7 @@ export class DemoErpStore {
   scans: ScanRecord[] = [
     {
       id: 'scan-001',
-      storage_path: 'demo-scans/faktur_pembelian_ayam_makmur.pdf',
+      storage_path: 'demo-scans/faktur_pembelian_ayam_makmur.jpg',
       mime_type: 'image/jpeg',
       status: 'needs_review',
       created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
@@ -398,6 +399,23 @@ export class DemoErpStore {
     'sale-002': new Date(Date.now() + 3600000 * 24 * 7).toISOString().slice(0, 10),
     'sale-003': new Date(Date.now() + 3600000 * 24 * 14).toISOString().slice(0, 10),
     'po-003': new Date(Date.now() + 3600000 * 24 * 5).toISOString().slice(0, 10),
+  };
+
+  saleBranchIds: Record<string, string> = {
+    'sale-001': DEMO_BRANCH_PUSAT_ID,
+    'sale-002': DEMO_BRANCH_PUSAT_ID,
+    'sale-003': DEMO_BRANCH_PUSAT_ID,
+    'sale-004': DEMO_BRANCH_PUSAT_ID,
+  };
+
+  purchaseBranchIds: Record<string, string> = {
+    'po-001': DEMO_BRANCH_PUSAT_ID,
+    'po-002': DEMO_BRANCH_PUSAT_ID,
+    'po-003': DEMO_BRANCH_PUSAT_ID,
+  };
+
+  purchasePaidTotals: Record<string, number> = {
+    'po-003': 0,
   };
 
   auditLogs: SettingsRow[] = [
